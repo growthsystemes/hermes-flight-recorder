@@ -1632,6 +1632,23 @@ class RedactionReportFalsePositiveTest(unittest.TestCase):
         self.assertGreaterEqual(report["possible_secret_patterns"], 1)
         self.assertIn("api_key_like", report["pattern_hits"])
 
+    def test_nested_dict_pattern_hit_is_not_double_counted(self):
+        # Regression for a redaction_report() bug: walk_items() emits both a
+        # container entry (e.g. "runtime": {...}) and each of its leaf entries
+        # separately, so scanning scalar_values() on the container re-matched
+        # the same string once per ancestor level. A single URL occurrence
+        # nested one level deep must count exactly once, not (depth + 1) times.
+        from hermes_flight_recorder.flight_recorder_timeline import redaction_report
+        ev = self._event("run-nested")
+        ev["runtime"] = {
+            "target_preview": "https://example.com?[REDACTED]",
+            "sandbox_id_preview": "sandbox-1",
+        }
+        report = redaction_report([ev])
+        self.assertEqual(report["urls_raw"], 1)
+        self.assertEqual(report["possible_secret_patterns"], 1)
+        self.assertEqual(report["pattern_hits"], {"url": 1})
+
 
 if __name__ == "__main__":
     unittest.main()

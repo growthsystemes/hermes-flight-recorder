@@ -149,6 +149,13 @@ def redaction_report(events: list[dict[str, Any]]) -> dict[str, Any]:
                 continue
             if key in {"schema_version", "recorder_version", "semconv_version", "otel_mapping_version", "event_type"}:
                 continue
+            if isinstance(value, (dict, list)):
+                # walk_items() already emits a separate entry for every leaf
+                # inside this container; scanning it again here via
+                # scalar_values() would re-match every nested string once per
+                # ancestor level, inflating pattern_hits/urls_raw/emails_raw
+                # by (nesting depth + 1)x for a single real occurrence.
+                continue
             for text in scalar_values(value):
                 for name, pattern in SECRET_VALUE_PATTERNS.items():
                     if pattern.search(text):
