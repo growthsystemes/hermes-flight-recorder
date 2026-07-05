@@ -8,17 +8,25 @@ the pre-publication numbering that produced the `0.1.0` public release.
 
 ## Public releases
 
-### Unreleased
+### 0.1.1 - 2026-07-05
 
-- Removed remaining references to the internal "DataForge" platform name
+- Added generic span helpers for public adopters: `recorder.span(...)`,
+  `recorder.aspan(...)`, `recorder.arecord(...)`, and
+  `@recorder.trace_tool_call(...)`. They emit the existing canonical JSONL
+  events and do not depend on any agent framework.
+- Added the `py.typed` marker so type checkers can consume the package's
+  inline type hints.
+- Added a standalone GitHub Actions CI workflow for the public repository
+  shape: unit tests, build, `twine check`, import smoke, and CLI smoke.
+- Documented async usage and the current multi-process JSONL boundary: the
+  writer is thread-safe inside one process; multi-worker deployments should
+  use one JSONL file per worker/PID until cross-process rotation locking is
+  explicitly supported.
+- Removed remaining references to the internal platform name
   from public-facing text (README, package description/keywords, example
   docstring, two source comments) — the library was always agent/platform
   agnostic; this just removes the last vestiges of internal branding from
-  what ships publicly. `pyproject.toml`'s `authors` field intentionally
-  left unchanged pending a decision. Not yet published to PyPI (see
-  `README.md`, which is current on GitHub but not yet reflected on the
-  frozen `0.1.0` PyPI page — PyPI shows the README as of the version it was
-  built with, not the latest source).
+  what ships publicly, including package author metadata.
 
 ### 0.1.0 - 2026-07-05
 

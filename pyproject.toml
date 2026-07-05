@@ -7,12 +7,12 @@ name = "hermes-flight-recorder"
 # Public PyPI release numbering restarts at 0.1.0 for the first public
 # release, independent of internal pre-publication iteration (which reached
 # 0.3.1). See CHANGELOG.md for the full internal-vs-public version history.
-version = "0.1.0"
+version = "0.1.1"
 description = "Privacy-first, in-process JSONL flight recorder and OTLP exporter for LLM agents."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-authors = [{ name = "DataForge / GrowthSystemes" }]
+authors = [{ name = "GrowthSystemes" }]
 keywords = ["observability", "agent", "otlp", "opentelemetry", "tracing", "hermes"]
 classifiers = [
     "Development Status :: 3 - Alpha",

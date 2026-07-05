@@ -8,8 +8,10 @@ when the recorder is disabled or when local storage fails.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import os
@@ -22,9 +24,10 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 _LOGGER = logging.getLogger("hermes.flight_recorder")
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 # 0.3.0 (2026-06-25): additive governance/interoperability pass - tool catalog
@@ -37,7 +40,7 @@ SCHEMA_VERSION = "0.3.0"
 # history", which reached 0.3.1 before the public decision). The embedded
 # Hermes runtime copy under deployments/docker/hermes-agent/src/ keeps its own
 # internal version independently of this public package.
-RECORDER_VERSION = "0.1.0"
+RECORDER_VERSION = "0.1.1"
 REDACTION_POLICY_VERSION = "0.1.0"  # unchanged: no redaction-behaviour change
 SEMCONV_VERSION = "otel-genai-compat-2026-06-20"
 OTEL_MAPPING_VERSION = "0.2.0"
@@ -231,6 +234,178 @@ class FlightRecorderSettings:
     write_queue_max_events: int = 1000
     rotate_bytes: int = 0
     retention_files: int = 0
+
+
+class FlightRecorderSpan:
+    """Synchronous context manager that emits start/end events for one span."""
+
+    def __init__(
+        self,
+        recorder: "HermesFlightRecorder",
+        event_type: str,
+        *,
+        run_id: str = "default-run",
+        trace_id: str | None = None,
+        span_id: str | None = None,
+        parent_span_id: str | None = None,
+        session_id: str | None = None,
+        turn_id: str | None = None,
+        task_id: str | None = None,
+        source: str = "backend",
+        actor: str = "agent",
+        status: str = "ok",
+        model: dict[str, Any] | None = None,
+        tool: dict[str, Any] | None = None,
+        tool_name: str | None = None,
+        tool_category: str = "custom",
+        arguments: Any | None = None,
+        result: Any | None = None,
+        error: Any | None = None,
+        side_effects: list[dict[str, Any]] | None = None,
+        runtime: dict[str, Any] | None = None,
+        attributes: dict[str, Any] | None = None,
+    ):
+        self.recorder = recorder
+        self.event_type = event_type
+        self.run_id = run_id
+        self.trace_id = trace_id or recorder.trace_id(run_id)
+        self.span_id = span_id or uuid.uuid4().hex[:16]
+        self.parent_span_id = parent_span_id
+        self.session_id = session_id or run_id
+        self.turn_id = turn_id
+        self.task_id = task_id or run_id
+        self.source = source
+        self.actor = actor
+        self.status = status
+        self.model = model
+        self.tool = tool
+        self.tool_name = tool_name
+        self.tool_category = tool_category
+        self.arguments = arguments
+        self.result = result
+        self.error = error
+        self.side_effects = side_effects
+        self.runtime = runtime
+        self.attributes = dict(attributes or {})
+        self.start_ts: str | None = None
+        self.end_ts: str | None = None
+        self._started_monotonic: float | None = None
+        self.start_event: dict[str, Any] = {}
+        self.end_event: dict[str, Any] = {}
+
+    def __enter__(self) -> "FlightRecorderSpan":
+        self.start_ts = utc_now_iso()
+        self._started_monotonic = time.monotonic()
+        self.start_event = self.recorder.record(
+            **self._event_kwargs(phase="start", start_ts=self.start_ts, status=self.status)
+        )
+        return self
+
+    def __exit__(self, exc_type: Any, exc: BaseException | None, tb: Any) -> bool:
+        self.end(exc)
+        return False
+
+    def set_result(self, result: Any) -> None:
+        self.result = result
+
+    def set_error(self, error: Any) -> None:
+        self.error = error
+        self.status = "error"
+
+    def set_model(self, model: dict[str, Any]) -> None:
+        self.model = model
+
+    def set_attribute(self, key: str, value: Any) -> None:
+        self.attributes[key] = value
+
+    def end(self, exc: BaseException | None = None) -> dict[str, Any]:
+        if exc is not None:
+            self.status = "error"
+            if self.error is None:
+                self.error = {"type": type(exc).__name__, "message": str(exc)}
+        self.end_ts = utc_now_iso()
+        duration_ms = None
+        if self._started_monotonic is not None:
+            duration_ms = max(0, int((time.monotonic() - self._started_monotonic) * 1000))
+        self.end_event = self.recorder.record(
+            **self._event_kwargs(
+                phase="end",
+                start_ts=self.start_ts,
+                end_ts=self.end_ts,
+                duration_ms=duration_ms,
+                status=self.status,
+            )
+        )
+        return self.end_event
+
+    def _event_kwargs(self, **overrides: Any) -> dict[str, Any]:
+        tool = self.tool
+        if tool is None and self.tool_name:
+            tool = self.recorder.tool_payload(
+                self.tool_name,
+                arguments=self.arguments,
+                result=self.result,
+                error=self.error,
+                category=self.tool_category,
+            )
+        kwargs: dict[str, Any] = {
+            "event_type": self.event_type,
+            "trace_id": self.trace_id,
+            "span_id": self.span_id,
+            "parent_span_id": self.parent_span_id,
+            "session_id": self.session_id,
+            "turn_id": self.turn_id,
+            "run_id": self.run_id,
+            "task_id": self.task_id,
+            "source": self.source,
+            "status": self.status,
+            "actor": self.actor,
+            "model": self.model,
+            "tool": tool,
+            "side_effects": self.side_effects,
+            "runtime": self.runtime,
+            "attributes": self.attributes or None,
+        }
+        kwargs.update(overrides)
+        return kwargs
+
+
+class AsyncFlightRecorderSpan:
+    """Async context manager equivalent of :class:`FlightRecorderSpan`."""
+
+    def __init__(self, recorder: "HermesFlightRecorder", event_type: str, **kwargs: Any):
+        self._span = FlightRecorderSpan(recorder, event_type, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._span, name)
+
+    async def __aenter__(self) -> FlightRecorderSpan:
+        self._span.start_ts = utc_now_iso()
+        self._span._started_monotonic = time.monotonic()
+        self._span.start_event = await self._span.recorder.arecord(
+            **self._span._event_kwargs(phase="start", start_ts=self._span.start_ts, status=self._span.status)
+        )
+        return self._span
+
+    async def __aexit__(self, exc_type: Any, exc: BaseException | None, tb: Any) -> bool:
+        if exc is not None:
+            self._span.status = "error"
+            if self._span.error is None:
+                self._span.error = {"type": type(exc).__name__, "message": str(exc)}
+        self._span.end_ts = utc_now_iso()
+        duration_ms = None
+        if self._span._started_monotonic is not None:
+            duration_ms = max(0, int((time.monotonic() - self._span._started_monotonic) * 1000))
+        self._span.end_event = await self._span.recorder.arecord(
+            **self._span._event_kwargs(
+                phase="end",
+                start_ts=self._span.start_ts,
+                end_ts=self._span.end_ts,
+                duration_ms=duration_ms,
+                status=self._span.status,
+            )
+        )
+        return False
 
 
 class HermesFlightRecorder:
@@ -436,13 +611,14 @@ class HermesFlightRecorder:
         result: Any | None = None,
         error: Any | None = None,
         *,
+        category: str = "custom",
         result_count: int | None = None,
         confidence: float | None = None,
         status_code: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "name": tool_name,
-            "category": "mcp" if str(tool_name).startswith("df_") else "custom",
+            "category": category,
         }
         # Low-cardinality result-quality metadata (no raw content): how many rows
         # the tool returned, an optional confidence, and the transport status code.
@@ -656,6 +832,82 @@ class HermesFlightRecorder:
             _LOGGER.debug("flight recorder suppressed record() error: %s", exc)
             return {}
 
+    async def arecord(self, **kwargs: Any) -> dict[str, Any]:
+        """Async-friendly wrapper around ``record``.
+
+        The recorder remains dependency-free and file-backed. This helper keeps
+        asyncio-native agents from blocking their event loop when they want the
+        simple synchronous writer semantics.
+        """
+        return await asyncio.to_thread(self.record, **kwargs)
+
+    def span(self, event_type: str, **kwargs: Any) -> FlightRecorderSpan:
+        """Create a generic start/end span context manager.
+
+        Example: ``with recorder.span("llm.call", model=...):``. The helper is
+        additive sugar over ``record`` and emits canonical JSONL events.
+        """
+        return FlightRecorderSpan(self, event_type, **kwargs)
+
+    def aspan(self, event_type: str, **kwargs: Any) -> AsyncFlightRecorderSpan:
+        """Create an async start/end span context manager."""
+        return AsyncFlightRecorderSpan(self, event_type, **kwargs)
+
+    def trace_tool_call(
+        self,
+        tool_name: str | None = None,
+        *,
+        run_id: str = "default-run",
+        capture_arguments: bool = True,
+        tool_category: str = "custom",
+        **span_kwargs: Any,
+    ) -> Callable[[F], F]:
+        """Decorate a sync or async Python function as a generic tool call.
+
+        The decorator records function arguments/results through the same
+        privacy pipeline as ``record_tool_call``. It re-raises user exceptions
+        after recording the failed tool span.
+        """
+        def decorator(func: F) -> F:
+            name = tool_name or getattr(func, "__name__", "tool")
+
+            if inspect.iscoroutinefunction(func):
+                @functools.wraps(func)
+                async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                    arguments = {"args": args, "kwargs": kwargs} if capture_arguments else None
+                    async with self.aspan(
+                        "tool.call",
+                        tool_name=name,
+                        tool_category=tool_category,
+                        arguments=arguments,
+                        run_id=run_id,
+                        **span_kwargs,
+                    ) as span:
+                        result = await func(*args, **kwargs)
+                        span.set_result(result)
+                        return result
+
+                return async_wrapper  # type: ignore[return-value]
+
+            @functools.wraps(func)
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                arguments = {"args": args, "kwargs": kwargs} if capture_arguments else None
+                with self.span(
+                    "tool.call",
+                    tool_name=name,
+                    tool_category=tool_category,
+                    arguments=arguments,
+                    run_id=run_id,
+                    **span_kwargs,
+                ) as span:
+                    result = func(*args, **kwargs)
+                    span.set_result(result)
+                    return result
+
+            return wrapper  # type: ignore[return-value]
+
+        return decorator
+
     def record_tool_call(
         self,
         *,
@@ -663,6 +915,7 @@ class HermesFlightRecorder:
         arguments: Any | None = None,
         result: Any | None = None,
         error: Any | None = None,
+        category: str = "custom",
         status: str = "ok",
         phase: str = "end",
         run_id: str = "default-run",
@@ -698,7 +951,7 @@ class HermesFlightRecorder:
             start_ts=start_ts,
             end_ts=end_ts,
             duration_ms=duration_ms,
-            tool=self.tool_payload(tool_name, arguments=arguments, result=result, error=error),
+            tool=self.tool_payload(tool_name, arguments=arguments, result=result, error=error, category=category),
             attributes=attributes,
         )
 

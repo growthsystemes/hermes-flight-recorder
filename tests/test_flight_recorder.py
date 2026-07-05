@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import io
 import json
 import os
@@ -84,13 +84,13 @@ class FlightRecorderTest(unittest.TestCase):
                 event_type="tool.call",
                 phase="end",
                 trace_id=recorder.trace_id("run-1"),
-                span_id=recorder.span_id("run-1", "tool", "df_document_answer"),
+                span_id=recorder.span_id("run-1", "tool", "document_search"),
                 session_id="run-1",
                 turn_id="run-1",
                 run_id="run-1",
                 task_id="run-1",
                 tool=recorder.tool_payload(
-                    "df_document_answer",
+                    "document_search",
                     arguments={"question": "secret token=abc"},
                     result={"answer": "private"},
                 ),
@@ -100,7 +100,7 @@ class FlightRecorderTest(unittest.TestCase):
             self.assertEqual(len(lines), 1)
             event = json.loads(lines[0])
             self.assertEqual(event["schema_version"], "0.3.0")
-            self.assertEqual(event["recorder_version"], "0.1.0")
+            self.assertEqual(event["recorder_version"], "0.1.1")
             self.assertEqual(event["otel_mapping_version"], "0.2.0")
             # parent_event_id / openinference_mapping_version stay out of the
             # canonical JSONL envelope; OpenInference is an OTLP projection.
@@ -134,7 +134,7 @@ class FlightRecorderTest(unittest.TestCase):
             with patch.dict(os.environ, env, clear=False):
                 recorder = HermesFlightRecorder.from_env()
                 event = recorder.record_tool_call(
-                    tool_name="df_answer_ontology_question",
+                    tool_name="knowledge_answer",
                     arguments={"question": "Who owns this entity?", "token": "secret"},
                     result={"answer": "redacted by metadata mode"},
                     status="ok",
@@ -149,6 +149,109 @@ class FlightRecorderTest(unittest.TestCase):
             self.assertIn("result_hmac", line)
             self.assertNotIn("Who owns this entity?", line)
             self.assertNotIn("redacted by metadata mode", line)
+
+    def test_span_context_manager_records_start_end_and_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            recorder = HermesFlightRecorder(
+                FlightRecorderSettings(enabled=True, path=str(path), capture_mode="metadata")
+            )
+
+            with recorder.span(
+                "tool.call",
+                tool_name="get_current_weather",
+                arguments={"city": "Lisbon", "api_key": "secret"},
+                run_id="span-demo",
+            ) as span:
+                span.set_result({"temperature_c": 21})
+
+            events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([event["phase"] for event in events], ["start", "end"])
+            self.assertEqual({event["span_id"] for event in events}, {span.span_id})
+            self.assertEqual(events[1]["status"], "ok")
+            self.assertIn("args_hmac", events[0]["tool"])
+            self.assertIn("result_hmac", events[1]["tool"])
+            self.assertNotIn("secret", path.read_text(encoding="utf-8"))
+
+    def test_span_context_manager_records_exception_and_reraises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            recorder = HermesFlightRecorder(
+                FlightRecorderSettings(enabled=True, path=str(path), capture_mode="metadata")
+            )
+
+            with self.assertRaises(ValueError):
+                with recorder.span("tool.call", tool_name="failing_tool", run_id="span-error"):
+                    raise ValueError("boom token=secret")
+
+            events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(events[-1]["phase"], "end")
+            self.assertEqual(events[-1]["status"], "error")
+            self.assertIn("error_hmac", events[-1]["tool"])
+            self.assertNotIn("token=secret", path.read_text(encoding="utf-8"))
+
+    def test_trace_tool_call_decorator_records_sync_function(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            recorder = HermesFlightRecorder(
+                FlightRecorderSettings(enabled=True, path=str(path), capture_mode="metadata")
+            )
+
+            @recorder.trace_tool_call("lookup_account", run_id="decorator-demo")
+            def lookup_account(account_id: str) -> dict[str, str]:
+                return {"account_id": account_id, "tier": "gold"}
+
+            result = lookup_account("acct-secret")
+
+            self.assertEqual(result["tier"], "gold")
+            events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([event["phase"] for event in events], ["start", "end"])
+            self.assertEqual(events[0]["tool"]["name"], "lookup_account")
+            self.assertIn("args_hmac", events[0]["tool"])
+            self.assertIn("result_hmac", events[1]["tool"])
+            self.assertNotIn("acct-secret", path.read_text(encoding="utf-8"))
+
+    def test_async_span_and_decorator_record_without_blocking_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            recorder = HermesFlightRecorder(
+                FlightRecorderSettings(enabled=True, path=str(path), capture_mode="metadata")
+            )
+
+            @recorder.trace_tool_call("async_lookup", run_id="async-demo")
+            async def async_lookup(value: str) -> dict[str, str]:
+                await asyncio.sleep(0)
+                return {"value": value}
+
+            async def drive():
+                async with recorder.aspan(
+                    "llm.call",
+                    run_id="async-demo",
+                    model=recorder.model_payload(provider="example", name="example-model"),
+                ) as span:
+                    span.set_model(
+                        recorder.model_payload(
+                            provider="example",
+                            name="example-model",
+                            usage={"input_tokens": 3, "output_tokens": 5},
+                        )
+                    )
+                return await async_lookup("private-value")
+
+            result = asyncio.run(drive())
+
+            self.assertEqual(result["value"], "private-value")
+            events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([event["event_type"] for event in events], ["llm.call", "llm.call", "tool.call", "tool.call"])
+            self.assertEqual(events[1]["model"]["input_tokens"], 3)
+            self.assertIn("result_hmac", events[-1]["tool"])
+            self.assertNotIn("private-value", path.read_text(encoding="utf-8"))
+
+    def test_package_ships_pep561_marker(self):
+        import hermes_flight_recorder
+
+        marker = Path(hermes_flight_recorder.__file__).with_name("py.typed")
+        self.assertTrue(marker.exists())
 
     def test_preview_mode_redacts_and_truncates_previews(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -168,7 +271,7 @@ class FlightRecorderTest(unittest.TestCase):
                 trace_id=recorder.trace_id("run-2"),
                 span_id=recorder.span_id("run-2", "tool"),
                 tool=recorder.tool_payload(
-                    "df_answer_ontology_question",
+                    "knowledge_answer",
                     arguments={"aaa_token": "abc", "question": "Contact", "long": "x" * 200},
                 ),
             )
@@ -224,7 +327,7 @@ class FlightRecorderTest(unittest.TestCase):
                 trace_id=recorder.trace_id("run-full"),
                 span_id=recorder.span_id("run-full", "tool"),
                 tool=recorder.tool_payload(
-                    "df_document_answer",
+                    "document_search",
                     arguments={"question": "Contact", "apiKey": "secret"},
                     result={"answer": "complete local answer"},
                 ),
@@ -276,16 +379,17 @@ class FlightRecorderTest(unittest.TestCase):
             start_ts="2026-06-20T08:00:00.000Z",
             end_ts="2026-06-20T08:00:00.100Z",
             tool=recorder.tool_payload(
-                "df_document_answer",
+                "document_search",
                 arguments={"question": "Contact"},
                 result={"answer": "private answer"},
+                category="mcp",
             ),
         )
 
         span = event_to_otlp_span(event)
         serialized = json.dumps(span)
 
-        self.assertEqual(span["name"], "tool.call df_document_answer")
+        self.assertEqual(span["name"], "tool.call document_search")
         self.assertEqual(span["traceId"], recorder.trace_id("run-otlp"))
         self.assertEqual(span["parentSpanId"], recorder.span_id("run-otlp", "turn"))
         self.assertIn("hermes.tool.args_hmac", serialized)
@@ -315,7 +419,7 @@ class FlightRecorderTest(unittest.TestCase):
             phase="start",
             trace_id=recorder.trace_id("run-preview"),
             span_id=recorder.span_id("run-preview", "tool"),
-            tool=recorder.tool_payload("df_document_answer", arguments={"question": "Contact", "token": "secret"}),
+            tool=recorder.tool_payload("document_search", arguments={"question": "Contact", "token": "secret"}),
         )
 
         span = event_to_otlp_span(event, include_previews=True)
@@ -376,12 +480,12 @@ class FlightRecorderTest(unittest.TestCase):
             FlightRecorderSettings(enabled=False, otlp_enabled=True, otlp_endpoint="http://c:4318/v1/traces")
         )
         self.assertFalse(off.otlp_flush_active())
-        # Enabled but no endpoint configured → nothing to export, no loop.
+        # Enabled but no endpoint configured â†’ nothing to export, no loop.
         no_endpoint = HermesFlightRecorder(
             FlightRecorderSettings(enabled=True, otlp_enabled=True, otlp_endpoint="")
         )
         self.assertFalse(no_endpoint.otlp_flush_active())
-        # Enabled + OTLP + endpoint → loop should run.
+        # Enabled + OTLP + endpoint â†’ loop should run.
         active = HermesFlightRecorder(
             FlightRecorderSettings(enabled=True, otlp_enabled=True, otlp_endpoint="http://c:4318/v1/traces")
         )
@@ -451,7 +555,7 @@ class FlightRecorderTest(unittest.TestCase):
                         "run_id": "fixture-json",
                         "events": [
                             {"event_type": "hermes.session"},
-                            {"event_type": "tool.call", "tool_name": "df_document_answer"},
+                            {"event_type": "tool.call", "tool_name": "document_search"},
                         ],
                     }
                 ),
@@ -479,7 +583,7 @@ class FlightRecorderTest(unittest.TestCase):
                         "events": [
                             {
                                 "event_type": "tool.call",
-                                "tool_name": "df_document_answer",
+                                "tool_name": "document_search",
                                 "arguments": {"question": "Contact", "api_key": "secret-value"},
                                 "result": {"answer": "ok token=abc"},
                             }
@@ -515,7 +619,7 @@ class FlightRecorderTest(unittest.TestCase):
                             {
                                 "event_type": "tool.call",
                                 "phase": "end",
-                                "tool_name": "df_document_answer",
+                                "tool_name": "document_search",
                                 "arguments": {"question": "Contact"},
                                 "result": {"answer": "private local answer"},
                             }
@@ -615,7 +719,7 @@ class FlightRecorderTest(unittest.TestCase):
                         "events": [
                             {
                                 "event_type": "tool.call",
-                                "tool_name": "df_document_answer",
+                                "tool_name": "document_search",
                                 "side_effects": [
                                     {
                                         "type": "file.write",
@@ -788,7 +892,7 @@ class FlightRecorderTest(unittest.TestCase):
                         "events": [
                             {
                                 "event_type": "tool.call",
-                                "tool_name": "df_document_answer",
+                                "tool_name": "document_search",
                                 "arguments": {
                                     "question": "my password is hunter2",
                                     "url": "https://example.com?token=abc123",
@@ -829,7 +933,7 @@ class FlightRecorderTest(unittest.TestCase):
             session_id="timeline",
             status="blocked",
             duration_ms=2,
-            tool=recorder.tool_payload("df_mutating_write"),
+            tool=recorder.tool_payload("mutating_write"),
         )
         args = type("Args", (), {
             "session": None,
@@ -844,7 +948,7 @@ class FlightRecorderTest(unittest.TestCase):
         output = render_timeline([event], args)
 
         self.assertIn("tool.call end blocked 2ms", output)
-        self.assertIn("tool=df_mutating_write", output)
+        self.assertIn("tool=mutating_write", output)
 
     def test_schema_validation_and_live_index_are_status_visible(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -868,7 +972,7 @@ class FlightRecorderTest(unittest.TestCase):
                 run_id="indexed",
                 status="ok",
                 duration_ms=7,
-                tool=recorder.tool_payload("df_document_answer", arguments={"question": "Contact"}),
+                tool=recorder.tool_payload("document_search", arguments={"question": "Contact"}),
             )
 
             status = recorder.status()
@@ -876,7 +980,7 @@ class FlightRecorderTest(unittest.TestCase):
             self.assertFalse(status["index_failed"])
             self.assertEqual(status["schema_invalid_events"], 0)
             self.assertTrue(index_path.exists())
-            indexed_events = query_index(index_path, {"tool_name": "df_document_answer"}, limit=10)
+            indexed_events = query_index(index_path, {"tool_name": "document_search"}, limit=10)
             self.assertEqual(len(indexed_events), 1)
             self.assertEqual(indexed_events[0]["event_type"], "tool.call")
 
@@ -964,7 +1068,7 @@ class FlightRecorderTest(unittest.TestCase):
                     trace_id=recorder.trace_id("rotate"),
                     span_id=recorder.span_id("rotate", "tool", index),
                     run_id="rotate",
-                    tool=recorder.tool_payload("df_document_answer", result={"answer": "x" * 200}),
+                    tool=recorder.tool_payload("document_search", result={"answer": "x" * 200}),
                 )
 
             status = recorder.status()
@@ -987,7 +1091,7 @@ class FlightRecorderTest(unittest.TestCase):
                 phase="end",
                 trace_id=recorder.trace_id("oversize"),
                 span_id=recorder.span_id("oversize", "tool"),
-                tool=recorder.tool_payload("df_document_answer", result={"answer": "x" * 2000}),
+                tool=recorder.tool_payload("document_search", result={"answer": "x" * 2000}),
             )
 
             event = json.loads(path.read_text(encoding="utf-8"))
@@ -1011,7 +1115,7 @@ class FlightRecorderTest(unittest.TestCase):
                 trace_id=recorder.trace_id("summary"),
                 span_id=recorder.span_id("summary", "tool"),
                 status="blocked",
-                tool=recorder.tool_payload("df_plan_action"),
+                tool=recorder.tool_payload("plan_action"),
             ),
         ]
 
@@ -1020,7 +1124,7 @@ class FlightRecorderTest(unittest.TestCase):
 
         self.assertEqual(summary["events"], 2)
         self.assertEqual(summary["statuses"]["blocked"], 1)
-        self.assertEqual(summary["tools"]["df_plan_action"], 1)
+        self.assertEqual(summary["tools"]["plan_action"], 1)
         self.assertEqual(structure["invalid_events"], 0)
         self.assertEqual(structure["unknown_event_type_events"], 0)
 
@@ -1028,7 +1132,7 @@ class FlightRecorderTest(unittest.TestCase):
         recorder = HermesFlightRecorder(FlightRecorderSettings(enabled=False))
         events = [
             recorder.record_tool_call(
-                tool_name="df_mutating_write",
+                tool_name="mutating_write",
                 status="blocked",
                 run_id="explain",
                 duration_ms=5,
@@ -1047,7 +1151,7 @@ class FlightRecorderTest(unittest.TestCase):
         report = explain_events(events)
 
         self.assertEqual(report["likely_cause"], "policy or capability block recorded")
-        self.assertEqual(report["blocked_tools"], ["df_mutating_write"])
+        self.assertEqual(report["blocked_tools"], ["mutating_write"])
         self.assertEqual(report["retry_count"], 2)
         self.assertEqual(report["llm"]["cost_usd"], 0.01)
         self.assertEqual(report["privacy"]["raw_payload_fields"], 0)
@@ -1064,7 +1168,7 @@ class FlightRecorderTest(unittest.TestCase):
                         "events": [
                             {
                                 "event_type": "tool.call",
-                                "tool_name": "df_answer_ontology_question",
+                                "tool_name": "knowledge_answer",
                                 "arguments": {"question": "Contact", "token": "secret"},
                                 "result": {"answer": "private"},
                             }
@@ -1086,7 +1190,7 @@ class FlightRecorderTest(unittest.TestCase):
             with redirect_stdout(stdout):
                 timeline_code = hermes_fr_main(["timeline", str(output_path), "--show-errors"])
             self.assertEqual(timeline_code, 0)
-            self.assertIn("tool=df_answer_ontology_question", stdout.getvalue())
+            self.assertIn("tool=knowledge_answer", stdout.getvalue())
 
             stdout = io.StringIO()
             with redirect_stdout(stdout):
@@ -1136,7 +1240,7 @@ class FlightRecorderTest(unittest.TestCase):
             hermes_fr_main(["--version"])
 
         self.assertEqual(raised.exception.code, 0)
-        self.assertIn("hermes-flight-recorder 0.1.0", stdout.getvalue())
+        self.assertIn("hermes-flight-recorder 0.1.1", stdout.getvalue())
 
     def test_flush_otlp_without_httpx_is_fail_open_with_install_hint(self):
         recorder = HermesFlightRecorder(
@@ -1291,7 +1395,7 @@ class FlightRecorderTest(unittest.TestCase):
                         span_id=recorder.span_id(run_id, "tool", worker_id, index),
                         run_id=run_id,
                         tool=recorder.tool_payload(
-                            "df_document_answer",
+                            "document_search",
                             arguments={"worker": worker_id, "index": index},
                             result={"answer": "x" * 64},
                         ),
@@ -1343,7 +1447,7 @@ class FlightRecorderTest(unittest.TestCase):
                 trace_id=recorder.trace_id("compat"),
                 span_id=recorder.span_id("compat", "tool"),
                 run_id="compat",
-                tool=recorder.tool_payload("df_document_answer"),
+                tool=recorder.tool_payload("document_search"),
                 attributes={"future_field": "preserved", "nested": {"future_nested": 7}},
             )
 
@@ -1498,7 +1602,7 @@ class FlightRecorderRobustnessTest(unittest.TestCase):
         self.assertEqual(result["exported"], 0)
         status = recorder.status()
         self.assertTrue(status["otlp_failed"])
-        # Buffer retained so a later flush can retry — no silent loss.
+        # Buffer retained so a later flush can retry â€” no silent loss.
         self.assertEqual(status["otlp_buffered_events"], 1)
 
     def test_index_failure_keeps_jsonl_source_of_truth(self):
@@ -1617,7 +1721,7 @@ class RedactionReportFalsePositiveTest(unittest.TestCase):
 
     def test_internal_id_with_sk_substring_is_not_flagged(self):
         from hermes_flight_recorder.flight_recorder_timeline import redaction_report
-        # "task-store-scan" contains "sk-" mid-word — must NOT count as a secret.
+        # "task-store-scan" contains "sk-" mid-word â€” must NOT count as a secret.
         report = redaction_report([self._event("task-store-scan")])
         self.assertEqual(report["possible_secret_patterns"], 0)
         self.assertEqual(report["pattern_hits"], {})
@@ -1652,3 +1756,4 @@ class RedactionReportFalsePositiveTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

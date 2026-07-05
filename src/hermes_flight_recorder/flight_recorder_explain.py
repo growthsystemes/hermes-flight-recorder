@@ -5,8 +5,8 @@ Turns the low-level JSONL into the answer an operator actually wants:
     $ python -m hermes_flight_recorder.flight_recorder_explain events.jsonl --run <id>
     Run: <id>
     Status: failed
-    Probable cause: MCP transport error (df_answer_ontology_question)
-    Selected capabilities: df_answer_ontology_question, df_entity_dossier
+    Probable cause: MCP transport error (knowledge_answer)
+    Selected capabilities: knowledge_answer, entity_profile
     Tools attempted: 3
     Blocked tools: 1
     Retries: 2  |  Policy denies: 0

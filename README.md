@@ -63,18 +63,37 @@ recorder = FlightRecorder(
     FlightRecorderSettings(enabled=True, path="events.jsonl", capture_mode="metadata")
 )
 
-recorder.record_tool_call(
+with recorder.span(
+    "tool.call",
     tool_name="get_current_weather",
     arguments={"city": "Lisbon"},
-    result={"temperature_c": 21, "conditions": "clear"},
-    status="ok",
     run_id="demo",
-)
+) as span:
+    span.set_result({"temperature_c": 21, "conditions": "clear"})
 ```
 
 `FlightRecorder` is exported as a neutral alias of `HermesFlightRecorder`.
 `HermesFlightRecorder.from_env()` / `FlightRecorder.from_env()` reads
 `FLIGHT_RECORDER_*` variables directly for non-Hermes adopters.
+
+For the lowest-level integration point, call `record(...)` directly. For the
+common case, prefer:
+
+- `with recorder.span("llm.call", ...)` for start/end span pairs.
+- `async with recorder.aspan("llm.call", ...)` inside asyncio-native agents.
+- `@recorder.trace_tool_call("tool_name")` to trace a sync or async Python
+  function as a privacy-safe `tool.call`.
+
+Example decorator:
+
+```python
+@recorder.trace_tool_call("lookup_customer", run_id="demo")
+def lookup_customer(customer_id: str) -> dict[str, str]:
+    return {"customer_id": customer_id, "status": "active"}
+```
+
+In `metadata` mode, arguments, results, prompts, and responses are written as
+HMAC digests, not raw content.
 
 ## Public API
 
@@ -83,6 +102,8 @@ The stable public surface is the top-level `hermes_flight_recorder` export:
 - `HermesFlightRecorder`
 - `FlightRecorder`
 - `FlightRecorderSettings`
+- `FlightRecorderSpan`
+- `AsyncFlightRecorderSpan`
 - `utc_now_iso`
 - `event_to_otlp_span`
 - `redact_value`
@@ -185,6 +206,18 @@ The projection includes:
 Previews are excluded from OTLP unless explicitly enabled with
 `otlp_include_previews=True`.
 
+## Async Agents and Local Writes
+
+`record(...)` is synchronous and writes to local JSONL. Async applications can
+use `await recorder.arecord(...)` or `async with recorder.aspan(...)` to avoid
+blocking the event loop with local file I/O. For high-throughput async agents,
+also consider `FlightRecorderSettings(async_writes_enabled=True)` and call
+`recorder.flush_writes()` during graceful shutdown.
+
+The JSONL writer is thread-safe inside one Python process. If you run multiple
+worker processes that all write to the same path, use one JSONL file per worker
+or PID. Cross-process rotation locking is not part of the 0.1.x contract.
+
 ## Rotation and Retention Presets
 
 These are human presets for `rotate_bytes` / `retention_files`; configure them
@@ -199,9 +232,9 @@ through `FlightRecorderSettings` or the equivalent environment variables.
 
 ## Versioning
 
-Package version `0.1.0` matches `RECORDER_VERSION=0.1.0` — this is the public
-PyPI release number, which restarts independently of internal pre-publication
-iteration (see `CHANGELOG.md`).
+Package version `0.1.1` matches `RECORDER_VERSION=0.1.1` — this is the public
+PyPI release number, which restarted independently of internal pre-publication
+iteration at `0.1.0` (see `CHANGELOG.md`).
 `SCHEMA_VERSION=0.3.0` remains stable for this consolidation.
 
 The JSONL schema is the durable contract. Compatibility within 0.3.x is

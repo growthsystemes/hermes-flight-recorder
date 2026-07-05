@@ -3,7 +3,8 @@
   "events": [
     {
       "event_type": "tool.call",
-      "tool_name": "df_answer_ontology_question",
+      "tool_name": "knowledge_answer",
+      "tool_category": "mcp",
       "arguments": {
         "question": "Who owns this entity?",
         "token": "secret"

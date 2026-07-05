@@ -165,7 +165,8 @@ def _tool_payload(recorder: HermesFlightRecorder, raw_event: dict[str, Any]) -> 
     arguments = raw_event.get("arguments", raw_tool.get("arguments"))
     result = raw_event.get("result", raw_tool.get("result"))
     error = raw_event.get("error", raw_tool.get("error"))
-    payload = recorder.tool_payload(str(tool_name), arguments=arguments, result=result, error=error)
+    category = raw_event.get("tool_category") or raw_tool.get("category") or "custom"
+    payload = recorder.tool_payload(str(tool_name), arguments=arguments, result=result, error=error, category=str(category))
     for key, value in raw_tool.items():
         if key not in {"name", "arguments", "result", "error"} and key not in payload:
             payload[key] = value
