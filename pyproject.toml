@@ -8,12 +8,12 @@ name = "hermes-flight-recorder"
 # release, independent of internal pre-publication iteration (which reached
 # 0.3.1). See CHANGELOG.md for the full internal-vs-public version history.
 version = "0.1.0"
-description = "Privacy-first, in-process JSONL flight recorder and OTLP exporter for LLM agents (built for and used by the Hermes DataForge agent)."
+description = "Privacy-first, in-process JSONL flight recorder and OTLP exporter for LLM agents."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [{ name = "DataForge / GrowthSystemes" }]
-keywords = ["observability", "agent", "otlp", "opentelemetry", "tracing", "hermes", "dataforge"]
+keywords = ["observability", "agent", "otlp", "opentelemetry", "tracing", "hermes"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -32,11 +32,9 @@ dependencies = []
 [project.optional-dependencies]
 otlp = ["httpx>=0.24,<1"]
 
-# NOTE: these URLs target the standalone public repo decided for this
-# release (growthsystemes/hermes-flight-recorder). That repo does not exist
-# yet as of this edit - it must be created and populated from this package
-# directory before publishing to PyPI, otherwise these links 404. See
-# agents/hermes/plugin-tracking/release/ for the extraction plan.
+# Standalone public repo, extracted and pushed 2026-07-05 (single clean
+# commit, no monorepo history, audited for secrets/private references before
+# push - see agents/hermes/plugin-tracking/release/PUBLIC-REPO-EXTRACTION-2026-07-05.md).
 [project.urls]
 Homepage = "https://github.com/growthsystemes/hermes-flight-recorder"
 Documentation = "https://github.com/growthsystemes/hermes-flight-recorder#readme"

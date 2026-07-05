@@ -22,7 +22,7 @@ ALLOWED_CAPTURE_MODES = {"metadata", "preview", "full", "forensic"}
 # (tests/test_flight_recorder.py::test_event_type_split_matches_call_sites).
 # ---------------------------------------------------------------------------
 
-# LIVE — emitted unconditionally by the DataForge MCP-router runtime (src/main.py).
+# LIVE — emitted unconditionally by the host agent's MCP-router runtime (src/main.py).
 # Every entry must have a literal `event_type="…"` call-site in main.py.
 LIVE_EVENT_TYPES = {
     "hermes.event",        # admission control + SSE streaming lifecycle
@@ -61,7 +61,7 @@ GATED_EVENT_TYPES: set[str] = set()
 
 # RESERVED — declared vocabulary with NO producer in this runtime. They map to
 # real upstream NousResearch Hermes toolsets (terminal/file/browser/delegation/
-# skills/eval) that the DataForge MCP-router does not run, plus research/HITL
+# skills/eval) that this MCP-router does not run, plus research/HITL
 # verbs. Kept for fixture replay and future agents; never fabricated here.
 RESERVED_EVENT_TYPES = {
     "hermes.checkpoint",

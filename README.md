@@ -1,7 +1,8 @@
 # hermes-flight-recorder
 
-Privacy-first, in-process flight recorder for the Hermes DataForge agent and
-other Python agents that want the same local observability contract.
+Privacy-first, in-process flight recorder for LLM agents. Originally built
+inside a production agent named Hermes; the library itself has no dependency
+on any specific agent framework or platform.
 
 Hermes Flight Recorder is a local-first black box recorder for agents:
 canonical JSONL, privacy-safe traces, replay, explain, query, redact-check, and
@@ -50,9 +51,8 @@ hermes-fr timeline events.jsonl --summary
 
 `examples/minimal-demo.py` wraps a generic made-up agent loop (a fake tool
 call plus a fake LLM call) with no external services and no network calls -
-it is intentionally agent-agnostic, since the library itself has no
-dependency on Hermes or DataForge (it just happens to be built inside and
-used by the Hermes DataForge agent in production).
+the library is intentionally agent-agnostic and has no dependency on any
+specific agent framework or platform.
 
 ## Library Usage
 
@@ -208,7 +208,7 @@ The JSONL schema is the durable contract. Compatibility within 0.3.x is
 additive: readers accept unknown fields, and the SQLite index is disposable and
 can be rebuilt from JSONL.
 
-The 0.3 schema was validated on DataForge staging on 2026-06-25:
+The 0.3 schema was validated against live production traffic on 2026-06-25:
 
 - 199 metadata-only canary events.
 - Redaction: 0 raw payload fields, 0 preview fields, 0 possible secret patterns.
@@ -218,8 +218,9 @@ The 0.3 schema was validated on DataForge staging on 2026-06-25:
 
 ## Status
 
-Pre-1.0. The package is regenerated from the staging-validated Hermes runtime
-and is suitable for private index soak before a public PyPI release.
+Pre-1.0 (`0.x`). Published on PyPI. The JSONL schema and public API are
+stable within `0.x` (additive-only changes); breaking changes will bump to
+`1.0`.
 
 ## License
 

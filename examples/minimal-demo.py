@@ -1,8 +1,9 @@
 """Minimal, agent-agnostic Flight Recorder demo.
 
-hermes-flight-recorder was built inside the Hermes DataForge agent, but the
-library itself has zero dependency on Hermes or DataForge: it is a generic
-JSONL flight recorder for any agent loop (LLM call -> tool call -> result).
+hermes-flight-recorder was originally built inside a production agent named
+Hermes, but the library itself has zero dependency on any specific agent
+framework or platform: it is a generic JSONL flight recorder for any agent
+loop (LLM call -> tool call -> result).
 
 This example wraps a made-up "research assistant" loop with no external
 services, no network, no Docker, and no Kubernetes - just:
