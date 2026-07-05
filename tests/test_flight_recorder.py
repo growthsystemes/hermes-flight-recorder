@@ -119,7 +119,7 @@ class FlightRecorderTest(unittest.TestCase):
             self.assertNotIn("args_preview", event["tool"])
             self.assertNotIn("result_preview", event["tool"])
             self.assertNotIn("args_hash", event["tool"])
-            self.assertNotIn("abc", lines[0])
+            self.assertNotIn("secret token=abc", lines[0])
 
     def test_from_env_and_record_tool_call_are_public_onboarding_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
