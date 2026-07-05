@@ -1,0 +1,33 @@
+{
+  "run_id": "fixture-policy-deny",
+  "events": [
+    {
+      "event_type": "tool.call",
+      "tool_name": "df_answer_ontology_question",
+      "arguments": {
+        "question": "Who owns this entity?",
+        "token": "secret"
+      },
+      "result": {
+        "answer": "private answer"
+      },
+      "status": "ok"
+    },
+    {
+      "event_type": "runtime.policy.deny",
+      "status": "blocked",
+      "actor": "runtime",
+      "runtime_policy": {
+        "decision": "denied",
+        "policy_type": "egress",
+        "target": "https://unknown-tracker.example?token=secret",
+        "sandbox_id": "sandbox-private",
+        "secret_withheld": true,
+        "correlation": "matched",
+        "metadata": {
+          "reason": "deny_by_default"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+# Scratch smoke/venv artifacts from manual release-gate runs (build, twine
+# check, clean-venv install smokes). Never part of the sdist/wheel (see
+# [tool.hatch.build.targets.sdist] include-allowlist in pyproject.toml), but
+# must stay out of git too - this directory gets copied verbatim into the
+# standalone public repo during extraction, which does not go through
+# hatchling's allowlist.
+.codex-tmp/
+
+# Standard Python build/venv noise
+__pycache__/
+*.pyc
+dist/
+build/
+*.egg-info/
+.venv/
+venv*/

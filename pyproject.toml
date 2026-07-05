@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hermes-flight-recorder"
+# Public PyPI release numbering restarts at 0.1.0 for the first public
+# release, independent of internal pre-publication iteration (which reached
+# 0.3.1). See CHANGELOG.md for the full internal-vs-public version history.
+version = "0.1.0"
+description = "Privacy-first, in-process JSONL flight recorder and OTLP exporter for LLM agents (built for and used by the Hermes DataForge agent)."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "DataForge / GrowthSystemes" }]
+keywords = ["observability", "agent", "otlp", "opentelemetry", "tracing", "hermes", "dataforge"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Monitoring",
+]
+# Core recorder has no runtime dependencies. OTLP export builds OTLP/HTTP JSON
+# directly and uses the optional `otlp` extra for HTTP transport.
+dependencies = []
+
+[project.optional-dependencies]
+otlp = ["httpx>=0.24,<1"]
+
+# NOTE: these URLs target the standalone public repo decided for this
+# release (growthsystemes/hermes-flight-recorder). That repo does not exist
+# yet as of this edit - it must be created and populated from this package
+# directory before publishing to PyPI, otherwise these links 404. See
+# agents/hermes/plugin-tracking/release/ for the extraction plan.
+[project.urls]
+Homepage = "https://github.com/growthsystemes/hermes-flight-recorder"
+Documentation = "https://github.com/growthsystemes/hermes-flight-recorder#readme"
+Source = "https://github.com/growthsystemes/hermes-flight-recorder"
+
+[project.scripts]
+hermes-fr = "hermes_flight_recorder.hermes_fr:main"
+fr-replay = "hermes_flight_recorder.flight_recorder_replay:main"
+fr-timeline = "hermes_flight_recorder.flight_recorder_timeline:main"
+fr-query = "hermes_flight_recorder.flight_recorder_query:main"
+fr-explain = "hermes_flight_recorder.flight_recorder_explain:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hermes_flight_recorder"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/hermes_flight_recorder",
+    "examples",
+    "tests",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "pyproject.toml",
+]
