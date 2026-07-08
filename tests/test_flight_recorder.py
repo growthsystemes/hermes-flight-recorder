@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import io
 import json
 import os
@@ -100,7 +100,7 @@ class FlightRecorderTest(unittest.TestCase):
             self.assertEqual(len(lines), 1)
             event = json.loads(lines[0])
             self.assertEqual(event["schema_version"], "0.3.0")
-            self.assertEqual(event["recorder_version"], "0.1.1")
+            self.assertEqual(event["recorder_version"], "0.1.3")
             self.assertEqual(event["otel_mapping_version"], "0.2.0")
             # parent_event_id / openinference_mapping_version stay out of the
             # canonical JSONL envelope; OpenInference is an OTLP projection.
@@ -1240,7 +1240,7 @@ class FlightRecorderTest(unittest.TestCase):
             hermes_fr_main(["--version"])
 
         self.assertEqual(raised.exception.code, 0)
-        self.assertIn("hermes-flight-recorder 0.1.1", stdout.getvalue())
+        self.assertIn("hermes-flight-recorder 0.1.3", stdout.getvalue())
 
     def test_flush_otlp_without_httpx_is_fail_open_with_install_hint(self):
         recorder = HermesFlightRecorder(

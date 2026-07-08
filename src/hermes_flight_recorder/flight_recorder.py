@@ -40,7 +40,7 @@ SCHEMA_VERSION = "0.3.0"
 # history", which reached 0.3.1 before the public decision). The embedded
 # Hermes runtime copy under deployments/docker/hermes-agent/src/ keeps its own
 # internal version independently of this public package.
-RECORDER_VERSION = "0.1.1"
+RECORDER_VERSION = "0.1.3"
 REDACTION_POLICY_VERSION = "0.1.0"  # unchanged: no redaction-behaviour change
 SEMCONV_VERSION = "otel-genai-compat-2026-06-20"
 OTEL_MAPPING_VERSION = "0.2.0"

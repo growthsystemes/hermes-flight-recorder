@@ -230,9 +230,62 @@ through `FlightRecorderSettings` or the equivalent environment variables.
 | `staging` | 64 MiB | 3 | Bounded canary and soak evidence. |
 | `forensic` | 256 MiB | 16 | Longer local chain for incident review. |
 
+## Integrations
+
+Optional, dependency-free auto-instrumentation adapters live under
+`hermes_flight_recorder.integrations`. Each adapter wraps a client in place --
+no manual `span()`/`record()` calls needed at the call site -- and never
+imports the SDK it instruments (duck-typed), so importing an adapter never
+requires that SDK to be installed.
+
+```python
+from openai import OpenAI
+from hermes_flight_recorder import HermesFlightRecorder, FlightRecorderSettings
+from hermes_flight_recorder.integrations.openai import instrument_openai
+
+recorder = HermesFlightRecorder(FlightRecorderSettings(enabled=True, path="events.jsonl"))
+client = instrument_openai(OpenAI(), recorder, run_id="demo")
+
+client.chat.completions.create(model="gpt-4o-mini", messages=[...])
+# -> a "llm.call" start/end pair is now in events.jsonl automatically.
+```
+
+`instrument_openai` also works with `AsyncOpenAI`, Azure OpenAI, and any
+OpenAI-compatible client exposing the same `chat.completions.create` shape.
+Streaming (`stream=True`) is handled correctly: the span stays open for the
+full lifetime of the stream and only closes once it is exhausted, so duration
+reflects actual generation time rather than time-to-first-chunk. Pass a
+`cost_fn(model_name, usage_dict) -> float | None` if you want `cost_usd`
+populated -- there is no built-in pricing table (it would go stale).
+
+```python
+from anthropic import Anthropic
+from hermes_flight_recorder import HermesFlightRecorder, FlightRecorderSettings
+from hermes_flight_recorder.integrations.anthropic import instrument_anthropic
+
+recorder = HermesFlightRecorder(FlightRecorderSettings(enabled=True, path="events.jsonl"))
+client = instrument_anthropic(Anthropic(), recorder, run_id="demo")
+
+client.messages.create(model="claude-3-5-sonnet-20241022", max_tokens=1024, messages=[...])
+# -> a "llm.call" start/end pair is now in events.jsonl automatically.
+```
+
+`instrument_anthropic` also works with `AsyncAnthropic`. Streaming
+(`stream=True` on `.create()`) is handled correctly, including Anthropic's
+split usage reporting: unlike OpenAI's uniform per-chunk object, Anthropic's
+stream is a sequence of `.type`-discriminated events -- `input_tokens` comes
+from the `message_start` event, `output_tokens` from a later `message_delta`
+event, and the adapter merges both before closing the span. Only
+`client.messages.create(...)` is instrumented; Anthropic's separate
+`client.messages.stream(...)` context-manager helper (`text_stream`,
+`get_final_message()`) is a distinct SDK code path and is **not** covered --
+calls made exclusively through `.stream()` will not emit spans.
+
+LangChain callback handler adapter is tracked as future work.
+
 ## Versioning
 
-Package version `0.1.1` matches `RECORDER_VERSION=0.1.1` — this is the public
+Package version `0.1.3` matches `RECORDER_VERSION=0.1.3` — this is the public
 PyPI release number, which restarted independently of internal pre-publication
 iteration at `0.1.0` (see `CHANGELOG.md`).
 `SCHEMA_VERSION=0.3.0` remains stable for this consolidation.
